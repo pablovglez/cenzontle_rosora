@@ -24,6 +24,7 @@ AGENT_XML = """
 
 CHARACTERISTIC_UUIDS_PREFIXES = [
     "123e4567-f289-0b12",
+    "f980ab40-65f5-4467",
 ]
 
 class FixedPasskeyAgent:
@@ -50,7 +51,7 @@ class CenzontleDevice:
         self.connected = props.get('Connected', None)
         self.uuids = props.get('UUIDs', None)
         self.path = f"{props.get('Adapter', None)}/dev_{self.address.replace(':', '_')}"
-        self.service_map = None
+        self.gatt_map = {}
 
     def __str__(self):
         return f"CenzontleDevice(address={self.address}, name={self.name})"
@@ -72,13 +73,12 @@ class Adapter:
 
 
 class BleManager:
-    def __init__(self, prefered_devices=[], service_uuid_filter=[]):
+    def __init__(self, prefered_devices=[]):
         # Need to unblock bluetooth via rfkill
         # rfkill list bluetooth
         # sudo rfkill unblock bluetooth
         self.bus = SystemBus()
         self.adapters = self._fetch_adapters(prefered_devices)
-        self.service_uuid_filter = service_uuid_filter
         self.devices = {}
         # busctl introspect org.bluez /org/bluez/hci0/ # busctl introspect org.bluez /org/bluez/hci0/dev_D8_3A_DD_37_52_03
 
@@ -122,6 +122,9 @@ class BleManager:
     def _get_device_path(self, adapter, address):
         mac = address.replace(":", "_")
         return f"{adapter.path}/dev_{mac}"
+
+    def _uuid_to_mac(self, uuid:str):
+        return ":".join([uuid[-12:].upper()[i:i+2] for i in range(0, 12, 2)])
 
     def connect(self, adapter_key, address):
         adapter = self.adapters[adapter_key]
@@ -191,18 +194,6 @@ class BleManager:
                     device_obj = CenzontleDevice(address, device_props)
                     self.devices[device_obj.name] = device_obj
 
-            gatt_chars = ifaces.get("org.bluez.GattCharacteristic1")
-            char_uuid = gatt_chars.get("UUID", None) if gatt_chars else None
-            if char_uuid is not None and char_uuid[:18] in CHARACTERISTIC_UUIDS_PREFIXES:
-                print(f"Service UUIDs for {path}: {gatt_chars}")
-                found_gatt_chars[f"{char_uuid[-12:].upper()}"] = {
-                    "UUID": char_uuid,
-                    'Service': gatt_chars.get("Service", None),
-                    "Handle": gatt_chars.get("Handle", None),
-                    "path": path
-                }
-                print(found_gatt_chars)
-
         return True
 
     def connect_devices(self):
@@ -213,6 +204,23 @@ class BleManager:
             elif not device.connected:
                 manager.connect(0, device.address)
                 print(f"Connected device")
+
+    def read_characteristics(self):
+        bluez = self.bus.get("org.bluez", "/")
+        managed = bluez.GetManagedObjects()
+        for path, ifaces in managed.items():
+            gatt_chars = ifaces.get("org.bluez.GattCharacteristic1")
+            char_uuid = gatt_chars.get("UUID", None) if gatt_chars else None
+            if char_uuid is not None and char_uuid[:18] in CHARACTERISTIC_UUIDS_PREFIXES:
+                # Find in device list
+                device_name = f"CENZ-{char_uuid[-8:].upper()}"
+                if device_name in self.devices.keys():
+                    self.devices[device_name].gatt_map[char_uuid] = {
+                        "Handle": gatt_chars.get("Handle", None),
+                        "path": path
+                    }
+        for device in self.devices.values():
+            print(device.gatt_map)
 
     def send_command(self, device_name, command):
         if device_name in self.devices.keys():
@@ -225,14 +233,19 @@ class BleManager:
             device_bus.WriteValue(command, {})
 
 if __name__ == '__main__':
-    manager = BleManager(["00:1A:7D:DA:71:15"], service_uuid_filter=['123e4567-f289-0b12-d3f6-a4f00f8d17b6'])
+    manager = BleManager(["00:1A:7D:DA:71:15"])
 
     # service_uuid_filter = ['123e4567-f289-0b12-d3f6-a4f00f8d17b6', 'f980ab40-65f5-4467-0000-a4f00f8d17b4']
+    service_uuid_filter = [
+        '123e4567-f289-0b12-d3f6-a4f00f8d17b6',
+        'f980ab40-65f5-4467-0000-7c9ebd0755ba',
+        'f980ab40-65f5-4467-0000-a4f00f8d17b4'
+    ]
 
     manager.scan_devices(0,
                          callback=None,
                          timeout=5,
-                         uuids_filter=manager.service_uuid_filter,
+                         uuids_filter=service_uuid_filter,
                          clean_devices=False
     # clean_devices=True
     )
@@ -240,71 +253,15 @@ if __name__ == '__main__':
     # Run async manager.connect_devices()
     #asyncio.run(manager.connect_devices())
     #asyncio.run(manager.send_command("CENZ-0F8D17B6", [0x09, 0x01, 0x01, 0x00, 0x0B]))
+    print(manager.devices)
     manager.connect_devices()
     print(f"Connected !")
+    # Discover characteristics
+    manager.read_characteristics()
+
+    # Demo: send command
+
     manager.send_command("CENZ-0F8D17B6", [0x09, 0x01, 0x01, 0x00, 0x0B])
     time.sleep(5)
     manager.send_command("CENZ-0F8D17B6", [0x09, 0x01, 0x00, 0x00, 0x0A])
     # Send command once connected
-
-
-    """
-    
-    
-    
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl introspect org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6 
-    NAME TYPE SIGNATURE RESULT/VALUE FLAGS 
-    org.bluez.Device1 interface - - - 
-    .CancelPairing method - - - 
-    .Connect method - - - 
-    .ConnectProfile method s - - 
-    .Disconnect method - - - 
-    .DisconnectProfile method s - - 
-    .Pair method - - - 
-    .Adapter property o "/org/bluez/hci0" emits-change 
-    .Address property s "A4:F0:0F:8D:17:B6" emits-change 
-    .AddressType property s "public" emits-change 
-    .AdvertisingData property a{yv} - emits-change 
-    .AdvertisingFlags property ay 1 6 emits-change 
-    .Alias property s "CENZ-0F8D17B6" emits-change writable 
-    .Appearance property q 7 emits-change 
-    .Blocked property b false emits-change writable 
-    .Bonded property b true emits-change 
-    .Class property u - emits-change 
-    .Connected property b true emits-change 
-    .Icon property s "unknown" emits-change 
-    .LegacyPairing property b false emits-change 
-    .ManufacturerData property a{qv} - emits-change 
-    .Modalias property s - emits-change 
-    .Name property s "CENZ-0F8D17B6" emits-change 
-    .Paired property b true emits-change 
-    .RSSI property n - emits-change 
-    .ServiceData property a{sv} - emits-change 
-    .ServicesResolved property b true emits-change 
-    .Sets property a{oa{sv}} - emits-change 
-    .Trusted property b false emits-change writable 
-    .TxPower property n - emits-change 
-    .UUIDs property as 4 "00001800-0000-1000-8000-00805f9b34fb… emits-change 
-    .WakeAllowed property b - emits-change writable 
-    org.freedesktop.DBus.Introspectable interface - - - 
-    .Introspect method - s - 
-    org.freedesktop.DBus.Properties interface - - - 
-    .Get method ss v - 
-    .GetAll method s a{sv} - 
-    .Set method ssv - - 
-    .PropertiesChanged signal sa{sv}as - - 
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl tree org.bluez  
-    └─ /org  
-     └─ /org/bluez ├─ /org/bluez/hci0 │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6 │ ├─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0001 │ │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0001/char0002 │ │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0001/char0002/desc0004 │ ├─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0014 │ │ ├─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0014/char0015 │ │ ├─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0014/char0017 │ │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0014/char0019 │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028 │ ├─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 │ │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029/desc002b │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char002c │ └─ /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char002c/desc002e └─ /org/bluez/testkpvgonzalez@pi4-pvgonzalez:~ $ busctl get-property org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 
-    Too few arguments. 
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl get-property org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 Flags  
-    as 3 "read" "write" "notify"  
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl call org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 WriteValue aya{sv} 5 0x09 0x01 0x01 0x00 0x0B 0 
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl call org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 WriteValue aya{sv} 5 0x09 0x01 0x00 0x00 0x0A 0  
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl call org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 WriteValue aya{sv} 5 0x09 0x01 0x01 0x00 0x0B 0 
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl call org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 WriteValue aya{sv} 5 0x09 0x01 0x00 0x00 0x0A 0  
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl call org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 WriteValue aya{sv} 5 0x09 0x01 0x01 0x00 0x0B 0 
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl call org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 WriteValue aya{sv} 5 0x09 0x01 0x01 0x00 0x0B 0  
-    pvgonzalez@pi4-pvgonzalez:~ $ busctl call org.bluez /org/bluez/hci0/dev_A4_F0_0F_8D_17_B6/service0028/char0029 org.bluez.GattCharacteristic1 WriteValue aya{sv} 5 0x09 0x01 0x00 0x00 0x0A 0 
-    pvgonzalez@pi4-pvgonzalez:~ $  
-    """
