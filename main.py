@@ -178,7 +178,6 @@ class BleManager:
         adapter_iface.StopDiscovery()
         bluez = self.bus.get("org.bluez", "/")
         managed = bluez.GetManagedObjects()
-        found_gatt_chars = {}
         for path, ifaces in managed.items():
             device_props = ifaces.get("org.bluez.Device1")
             if device_props and path.startswith(adapter.path):
@@ -222,7 +221,7 @@ class BleManager:
         for device in self.devices.values():
             print(device.gatt_map)
 
-    def send_command(self, device_name, command):
+    def send_command(self, device_name, char_uuid, command):
         if device_name in self.devices.keys():
             path = f'{self.devices[device_name].path}/service0028/char0029'
             device_bus = self.bus.get("org.bluez", path)
@@ -231,9 +230,16 @@ class BleManager:
             #print(device_bus.Introspect())
             #device_bus.WriteValue("org.bluez.GattCharacteristic1.WriteValue", "aya{sv}", command, {})
             device_bus.WriteValue(command, {})
+            device = self.devices[device_name]
+            if char_uuid in device.gatt_map.keys():
+                device_bus = self.bus.get("org.bluez", device.gatt_map[char_uuid].get('path'))
+                device_bus.WriteValue(command, {}) if device_bus else None
+
 
 if __name__ == '__main__':
-    manager = BleManager(["00:1A:7D:DA:71:15"])
+    #manager = BleManager(["00:1A:7D:DA:71:15"])
+    # If no prefered devices are given, the first one will be used
+    manager = BleManager()
 
     # service_uuid_filter = ['123e4567-f289-0b12-d3f6-a4f00f8d17b6', 'f980ab40-65f5-4467-0000-a4f00f8d17b4']
     service_uuid_filter = [
@@ -264,4 +270,8 @@ if __name__ == '__main__':
     manager.send_command("CENZ-0F8D17B6", [0x09, 0x01, 0x01, 0x00, 0x0B])
     time.sleep(5)
     manager.send_command("CENZ-0F8D17B6", [0x09, 0x01, 0x00, 0x00, 0x0A])
+    manager.send_command("CENZ-0F8D17B6", '123e4567-f289-0b12-d302-a4f00f8d17b6', [0x09, 0x01, 0x01, 0x00, 0x0B])
+    time.sleep(2)
+    manager.send_command("CENZ-0F8D17B6", '123e4567-f289-0b12-d302-a4f00f8d17b6', [0x09, 0x01, 0x00, 0x00, 0x0A])
+    time.sleep(2)
     # Send command once connected
