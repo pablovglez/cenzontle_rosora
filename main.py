@@ -6,7 +6,7 @@ from gi.repository import GLib
 import threading
 import time
 import asyncio
-from bleak import BleakScanner, BlueZScannerArgs
+from bleak import BleakScanner, BlueZScannerArgs, BlueZClientArgs, BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 import argparse
@@ -59,6 +59,7 @@ class CenzontleDevice:
         self.connected = props.get('props', {}).get('Connected', None)
         self.uuids = props.get('props', {}).get('UUIDs', None)
         self.path = props.get('props', {}).get('Path', None)
+        self.client = None
 
     def __str__(self):
         return f"CenzontleDevice(address={self.address}, name={self.name})"
@@ -85,7 +86,7 @@ class BleManager:
         # rfkill list bluetooth
         # sudo rfkill unblock bluetooth
         self.bus = SystemBus()
-        self.adapter = {"adapter": adapter} if adapter else None
+        self.adapter = BlueZClientArgs(adapter=adapter) if adapter else None
         self.devices = {}
         # busctl introspect org.bluez /org/bluez/hci0/ # busctl introspect org.bluez /org/bluez/hci0/dev_D8_3A_DD_37_52_03
 
@@ -133,12 +134,12 @@ class BleManager:
     def _uuid_to_mac(self, uuid:str):
         return ":".join([uuid[-12:].upper()[i:i+2] for i in range(0, 12, 2)])
 
-    def connect(self, adapter_key, address):
+    """def connect(self, adapter_key, address):
         adapter = self.adapters[adapter_key]
         path = self._get_device_path(adapter, address)
         device_iface = self.bus.get("org.bluez", path)
 
-        device_iface.Connect()
+        device_iface.Connect()"""
 
     def pair(self, adapter_key, address, cli_mode=False):
         adapter = self.adapters[adapter_key]
@@ -213,7 +214,8 @@ class BleManager:
 
     async def scan_devices(self, timeout=5, uuids_filter=None, clean_devices=False):
         scanner = BleakScanner(
-            self.register_device, uuids_filter, bluez={"adapter": "hci0"}
+            #self.register_device, uuids_filter, bluez={"adapter": self.adapter}
+            self.register_device, uuids_filter, bluez=self.adapter
         )
 
         logger.info("Starting scanner")
@@ -222,6 +224,8 @@ class BleManager:
 
         logger.info(f"Devices: {self.devices}")
 
+    def notify_callback(self, char_uuid, value):
+        logger.info("Notification from %s: %s", char_uuid, value)
 
     def connect_devices(self):
         for key, device in self.devices.items():
@@ -300,6 +304,7 @@ class BleManager:
 service_uuid_filter = [
         '123e4567-f289-0b12-d3f6-a4f00f8d17b6',
         'f980ab40-65f5-4467-0000-7c9ebd0755ba',
+        'f980ab40-65f5-4467-0000-58e6c519989a',
         'f980ab40-65f5-4467-0000-a4f00f8d17b4'
     ]
 
@@ -309,14 +314,31 @@ def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
     )
 
 async def main():
-    scanner = BleakScanner(
-        simple_callback, service_uuid_filter, bluez={"adapter":"hci0"}
-    )
+    manager = BleManager(adapter="hci1")
+    await manager.scan_devices(timeout=5, uuids_filter=service_uuid_filter)
 
-    while True:
-        logger.info("(re)starting scanner")
-        async with scanner:
-            await asyncio.sleep(5.0)
+    # Pair device
+    for device in manager.devices.values():
+        async with BleakClient(device.address) as client:
+            if not device.paired:
+                await client.pair()
+            await asyncio.sleep(2)
+            logger.info("Connected: %s", client.is_connected)
+            # Log the client.services:
+            logger.info("Services: %s", client.services.services)
+            logger.info("Chars: %s", client.services.characteristics)
+            for chars in client.services.characteristics.values():
+                logger.info("char val: %s", chars.uuid)
+            # Enable notifications, not working right now
+            await client.start_notify('00002a05-0000-1000-8000-00805f9b34fb', manager.notify_callback)
+            # Send command
+            await asyncio.sleep(2)
+            await client.write_gatt_char('f980ab40-65f5-4467-0002-58e6c519989a', bytearray([0x09, 0x01, 0x01, 0x00, 0x0B]))
+            await asyncio.sleep(2)
+            await client.write_gatt_char('f980ab40-65f5-4467-0002-58e6c519989a',
+                                         bytearray([0x09, 0x01, 0x01, 0x00, 0x0B]))
+            await asyncio.sleep(2)
+
 
 if __name__ == "__main__":
     log_level = logging.INFO
@@ -324,7 +346,7 @@ if __name__ == "__main__":
         level=log_level,
         format="%(asctime)-15s %(name)-8s %(levelname)s: %(message)s",
     )
-    manager = BleManager(adapter="hci0")
+    #manager = BleManager(adapter="hci1")
 
-    #asyncio.run(main())
-    asyncio.run(manager.scan_devices(timeout=5, uuids_filter=service_uuid_filter))
+    asyncio.run(main())
+    #asyncio.run(manager.scan_devices(timeout=5, uuids_filter=service_uuid_filter))
