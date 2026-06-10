@@ -15,13 +15,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 AGENT_PATH = "/org/bluez/agent"
+PASSKEY = 123456
 
 AGENT_XML = """  
 <node>
   <interface name="org.bluez.Agent1">
     <method name="RequestPasskey">
-      <arg type="o" name="device" direction="in"/>
-      <arg type="u" name="passkey" direction="out"/>
+      <arg direction="in" type="o"/>
+      <arg direction="out" type="u"/>
     </method>
     <method name="Cancel"/>
     <method name="Release"/>
@@ -42,6 +43,7 @@ class FixedPasskeyAgent:
         self._passkey = passkey
 
     def RequestPasskey(self, device):
+        logger.info("RequestPasskey for %s", device)
         return self._passkey
 
     def Cancel(self): pass
@@ -85,10 +87,38 @@ class BleManager:
         # Need to unblock bluetooth via rfkill
         # rfkill list bluetooth
         # sudo rfkill unblock bluetooth
-        self.bus = SystemBus()
+        #self.bus = SystemBus()
         self.adapter = BlueZClientArgs(adapter=adapter) if adapter else None
         self.devices = {}
+        self.agent_manager = None
+        self._dbus_loop = None
+        self._dbus_thread = None
+        self._register_agent()
         # busctl introspect org.bluez /org/bluez/hci0/ # busctl introspect org.bluez /org/bluez/hci0/dev_D8_3A_DD_37_52_03
+
+    def _register_agent(self):
+        self._dbus_loop = GLib.MainLoop()
+        bus = SystemBus()
+        agent = FixedPasskeyAgent(PASSKEY)
+        bus.register_object(AGENT_PATH, agent, None)
+        self.agent_manager = bus.get("org.bluez", "/org/bluez")
+        self.agent_manager.RegisterAgent(AGENT_PATH, "KeyboardOnly")
+        self.agent_manager.RequestDefaultAgent(AGENT_PATH)
+        logger.info("DBus agent registered.")
+        self._dbus_thread = threading.Thread(target=self._dbus_loop.run, daemon=True)
+        self._dbus_thread.start()
+        logger.info("DBus event loop running in background thread.")
+
+    def _unregister_agent(self):
+        if self.agent_manager:
+            try:
+                self.agent_manager.UnregisterAgent(AGENT_PATH)
+                logger.info("DBus agent unregistered.")
+            except Exception as e:
+                logger.error(f"Error unregistering agent: {e}")
+        if self._dbus_loop and self._dbus_loop.is_running():
+            self._dbus_loop.quit()
+            logger.info("DBus event loop stopped.")
 
     def _fetch_adapters(self, prefered_devices):
         adapters = {}
@@ -233,7 +263,7 @@ class BleManager:
                 self.pair(0, device.address, False)
                 print(f"Paired device")
             elif not device.connected:
-                manager.connect(0, device.address)
+                self.connect(0, device.address)
                 print(f"Connected device")
 
     def read_characteristics(self):
@@ -314,30 +344,38 @@ def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
     )
 
 async def main():
-    manager = BleManager(adapter="hci1")
+    manager = BleManager(adapter="hci0")
     await manager.scan_devices(timeout=5, uuids_filter=service_uuid_filter)
 
     # Pair device
     for device in manager.devices.values():
-        async with BleakClient(device.address) as client:
-            if not device.paired:
-                await client.pair()
-            await asyncio.sleep(2)
-            logger.info("Connected: %s", client.is_connected)
-            # Log the client.services:
-            logger.info("Services: %s", client.services.services)
-            logger.info("Chars: %s", client.services.characteristics)
-            for chars in client.services.characteristics.values():
-                logger.info("char val: %s", chars.uuid)
-            # Enable notifications, not working right now
-            await client.start_notify('00002a05-0000-1000-8000-00805f9b34fb', manager.notify_callback)
-            # Send command
-            await asyncio.sleep(2)
-            await client.write_gatt_char('f980ab40-65f5-4467-0002-58e6c519989a', bytearray([0x09, 0x01, 0x01, 0x00, 0x0B]))
-            await asyncio.sleep(2)
-            await client.write_gatt_char('f980ab40-65f5-4467-0002-58e6c519989a',
-                                         bytearray([0x09, 0x01, 0x01, 0x00, 0x0B]))
-            await asyncio.sleep(2)
+        async with BleakClient(device.address, pair=True) as client:
+            try:
+                """if not device.paired:
+                    await client.pair()"""
+                await asyncio.sleep(2)
+                logger.info("Connected: %s", client.is_connected)
+            finally:
+                try:
+                    manager.UnregisterAgent(AGENT_PATH)
+                except Exception:
+                    pass
+                # Log the client.services:
+                logger.info("Services: %s", client.services.services)
+                logger.info("Chars: %s", client.services.characteristics)
+                for chars in client.services.characteristics.values():
+                    logger.info("char val: %s", chars.uuid)
+                # Enable notifications, not working right now
+                await client.start_notify('123e4567-f289-0b12-d302-a4f00f8d17b6', manager.notify_callback)
+                # Send command
+                await client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
+                                             bytearray([0x0A, 0x30, 0x31, 0x32, 0x030, 0x00, 0xCD]))
+                await asyncio.sleep(2)
+                await client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6', bytearray([0x09, 0x01, 0x01, 0x00, 0x0B]))
+                await asyncio.sleep(2)
+                await client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
+                                             bytearray([0x09, 0x01, 0x00, 0x00, 0x0A]))
+                await asyncio.sleep(2)
 
 
 if __name__ == "__main__":
