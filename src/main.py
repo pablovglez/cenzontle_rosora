@@ -1,4 +1,4 @@
-import threading
+from threading import Lock, Thread
 import asyncio
 import logging
 from bleak import BleakScanner, BlueZClientArgs, BleakClient
@@ -32,7 +32,8 @@ class CenzontleDevice:
         self.client = None
 
     def __str__(self):
-        return f"CenzontleDevice(address={self.address}, name={self.name})"
+        return (f"CenzontleDevice(address={self.address}, name={self.name},"
+                f" Connected={self.client.is_connected if self.client else False})")
 
     def __repr__(self):
         return self.__str__()
@@ -99,6 +100,7 @@ class BleManager:
         self.adapter = BlueZClientArgs(adapter=adapter) if adapter else None
         self.devices = {}
         self.agent_manager = None
+        self.ble_lock = Lock()
         self._dbus_loop = None
         self._dbus_thread = None
         self._register_agent()
@@ -113,7 +115,7 @@ class BleManager:
         self.agent_manager.RegisterAgent(AGENT_PATH, "KeyboardOnly")
         self.agent_manager.RequestDefaultAgent(AGENT_PATH)
         logger.info("DBus agent registered.")
-        self._dbus_thread = threading.Thread(target=self._dbus_loop.run, daemon=True)
+        self._dbus_thread = Thread(target=self._dbus_loop.run, daemon=True)
         self._dbus_thread.start()
         logger.info("DBus event loop running in background thread.")
 
@@ -143,58 +145,81 @@ class BleManager:
         )
 
         logger.info("Starting scanner")
-        async with scanner:
-            await asyncio.sleep(timeout)
+        if self.ble_lock.locked():
+            await asyncio.sleep(1)
+        else:
+            async with scanner:
+                self.ble_lock.acquire()
+                await asyncio.sleep(timeout)
+                self.ble_lock.release()
 
         logger.info(f"Devices: {self.devices}")
 
     async def connect_devices(self):
-        if not self.devices:
-            return
-        for device in self.devices.values():
-            if device.client is None:
-                try:
-                    device.client = BleakClient(device.address, pair=True, timeout=10)
-                    await device.client.__aenter__()
-                    await asyncio.sleep(2)
-                except BleakDBusError as e:
-                    if (e.dbus_error == "org.bluez.Error.ConnectionAttemptFailed" and
-                            "Page Timeout" in e.dbus_error_details):
-                        # End of life of this run, we will retry later
-                        logger.warning(
-                            f"Connection attempt failed for {device.name} ({e.dbus_error} - {e.dbus_error_details}), will retry later.")
-                        continue
-                    raise
+        if not self.devices or self.ble_lock.locked():
+            await asyncio.sleep(5)
+        else:
+            self.ble_lock.acquire()
+            for device in self.devices.values():
+                if device.client is None or not device.client.is_connected:
+                    try:
+                        device.client = BleakClient(device.address, pair=True, timeout=10)
+                        await device.client.__aenter__()
+                        await asyncio.sleep(2)
+                    except BleakDBusError as e:
+                        if (e.dbus_error == "org.bluez.Error.ConnectionAttemptFailed" and
+                                "Page Timeout" in e.dbus_error_details):
+                            # End of life of this run, we will retry later
+                            logger.warning(
+                                f"Connection attempt failed for {device.name} ({e.dbus_error} - {e.dbus_error_details}), will retry later.")
+                            self.ble_lock.release()
+                            continue
+                        raise
+                    except Exception:
+                        self.ble_lock.release()
+                        raise
+
+            self.ble_lock.release()
 
     async def test_connect_devices(self):
-        for device in self.devices.values():
-            # Log the client.services:
-            logger.info("Services: %s", device.client.services.services)
-            logger.info("Chars: %s", device.client.services.characteristics)
-            for chars in device.client.services.characteristics.values():
-                logger.info("char val: %s", chars.uuid)
-            # Enable notifications, not working right now
-            await device.client.start_notify('123e4567-f289-0b12-d302-a4f00f8d17b6', self.notify_callback)
-            # Send command
-            await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
-                                                bytearray([0x0A, 0x30, 0x31, 0x32, 0x030, 0x00, 0xCD]))
-            await asyncio.sleep(2)
-            await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
-                                                bytearray([0x09, 0x01, 0x01, 0x00, 0x0B]))
-            await asyncio.sleep(2)
-            await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
-                                                bytearray([0x09, 0x01, 0x00, 0x00, 0x0A]))
-            await asyncio.sleep(2)
-            await device.send_command("set_relay", {"relay_number": 1, "relay_state": True})
-            await asyncio.sleep(2)
-            await device.send_command("set_relay", {"relay_number": 1, "relay_state": False})
-            for i in range(1, 24):
-                num = i % 4 + 1
-                logger.info(f"Sending command {num} to {device.name}")
-                await asyncio.sleep(0.25)
-                await device.send_command("set_relay", {"relay_number": num, "relay_state": True})
-                await asyncio.sleep(0.25)
-                await device.send_command("set_relay", {"relay_number": num, "relay_state": False})
+        if not self.devices or self.ble_lock.locked():
+            await asyncio.sleep(5)
+        else:
+            self.ble_lock.acquire()
+            for device in self.devices.values():
+                if device.client is None or not device.client.is_connected:
+                    continue
+                # Log the client.services:
+                logger.info("Services: %s", device.client.services.services)
+                logger.info("Chars: %s", device.client.services.characteristics)
+                for chars in device.client.services.characteristics.values():
+                    logger.info("char val: %s", chars.uuid)
+                # Enable notifications, not working right now
+                try:
+                    await device.client.start_notify('123e4567-f289-0b12-d302-a4f00f8d17b6', self.notify_callback)
+                except Exception as e:
+                    logger.error(f"Error starting notifications: {e}")
+                # Send command
+                await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
+                                                    bytearray([0x0A, 0x30, 0x31, 0x32, 0x030, 0x00, 0xCD]))
+                await asyncio.sleep(2)
+                await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
+                                                    bytearray([0x09, 0x01, 0x01, 0x00, 0x0B]))
+                await asyncio.sleep(2)
+                await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
+                                                    bytearray([0x09, 0x01, 0x00, 0x00, 0x0A]))
+                await asyncio.sleep(2)
+                await device.send_command("set_relay", {"relay_number": 1, "relay_state": True})
+                await asyncio.sleep(2)
+                await device.send_command("set_relay", {"relay_number": 1, "relay_state": False})
+                for i in range(1, 24):
+                    num = i % 4 + 1
+                    logger.info(f"Sending command {num} to {device.name}")
+                    await asyncio.sleep(0.25)
+                    await device.send_command("set_relay", {"relay_number": num, "relay_state": True})
+                    await asyncio.sleep(0.25)
+                    await device.send_command("set_relay", {"relay_number": num, "relay_state": False})
+            self.ble_lock.release()
 
     async def disconnect_devices(self):
         for device in self.devices.values():
@@ -255,7 +280,7 @@ def simple_callback(device: BLEDevice, advertisement_data: AdvertisementData):
     )
 
 
-async def monitored_task(coro_func, *args, name, restart_delay=2, **kwargs):
+async def monitored_task(coro_func, *args, name, loop_delay=5, restart_delay=2, **kwargs):
     """Run a task with monitoring and restart"""
     restart_count = 0
 
@@ -266,6 +291,8 @@ async def monitored_task(coro_func, *args, name, restart_delay=2, **kwargs):
             restart_count += 1
 
             await coro_func(*args, **kwargs)
+
+            await asyncio.sleep(loop_delay)
 
         except asyncio.CancelledError:
             logging.info(f"Task {name} cancelled after {restart_count} runs")
@@ -288,10 +315,11 @@ async def main(manager):
         task1 = tg.create_task(monitored_task(manager.scan_devices,
                                               5, service_uuid_filter,
                                               name="DeviceScanner",
+                                              loop_delay=15,
                                               restart_delay=5,
                                               ))
         task2 = tg.create_task(monitored_task(manager.connect_devices, name="ClientTask", restart_delay=5))
-        #task3 = tg.create_task(monitored_task(manager.test_connect_devices, name="TestConnectTask", restart_delay=5))
+        task3 = tg.create_task(monitored_task(manager.test_connect_devices, name="TestConnectTask", restart_delay=5))
 
 
         await asyncio.Event().wait()
