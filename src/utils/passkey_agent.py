@@ -1,3 +1,4 @@
+AGENT_PATH = "/org/bluez/agent"
 
 AGENT_XML = """  
 <node>
