@@ -1,0 +1,21 @@
+[project]
+name = "cenzontle-rosora"
+version = "1.0.0"
+description = "BLE manager controller for Cenzontle devices"
+readme = "README.md"
+authors = [
+    {name = "Pablo Gonzalez", email = "pablovglez@gmail.co,"},
+]
+classifiers = [
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+]
+
+[project.optional-dependencies]
+dev = [
+]
+
+[tool.setuptools.packages.find]
+include = ["src/*"]
+exclude = ["junit"]
