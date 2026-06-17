@@ -16,6 +16,7 @@ class MqttManager:
                                   protocol=mqtt.MQTTv5)
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
+        self._callbacks = []
 
         try:
             self.client.connect(MQTT_HOST,
@@ -52,9 +53,24 @@ class MqttManager:
                         retain=True)
         self.client.disconnect()
 
+    def message_callback_add(self, topic, callback):
+        """Add a message callback for a specific topic"""
+        if topic in self._callbacks:
+            raise ValueError(f"Callback for topic {topic} already exists")
+        self._callbacks.append(topic)
+        self.client.message_callback_add(topic, callback)
+
+    def callbacks(self):
+        return self._callbacks
+
+
+def test_callback(_client, _userdata, message):
+    print(f"Custom handler: {message.topic} -> {message.payload}")
+
 
 if __name__ == "__main__":
     mqtt_manager = MqttManager()
+    mqtt_manager.message_callback_add("mqttmanager/test", test_callback)
     try:
         mqtt_manager.loop()
     except KeyboardInterrupt:
