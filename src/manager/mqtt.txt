@@ -1,0 +1,132 @@
+    def on_connect(self, _client, _userdata, _flags, _rc):
+        """Callback when connected"""
+        self.mqtt_client.subscribe(self.service_name + "/#")
+
+        # Publish status and version automatically on connect
+        self.mqtt_client.publish(self.service_name + "/" + mqtt_api.STATUS,
+                                 json.dumps({mqtt_api.STATUS: mqtt_api.STATUS_ONLINE}),
+                                 retain=True)
+        self.mqtt_client.publish(self.service_name + "/" +  mqtt_api.VERSION,
+                                 json.dumps({mqtt_api.VERSION: self.service_version}),
+                                 retain=True)
+
+
+    def on_message(self, _client, _userdata, msg):
+        """Callback for received message"""
+        msg_str = msg.payload.decode("utf-8")
+        self.logger.debug("Message received: %s on topic: %s",
+                          msg_str, msg.topic)
+        # Discard empty payload messages
+        if len(msg_str) == 0:
+            return
+        try:
+            json_value = json.loads(msg_str)
+        except json.JSONDecodeError:
+            self.logger.error("ERROR badly formatted json received: %s on topic: %s",
+                              msg_str, msg.topic)
+            return
+        try:
+            if msg.topic.endswith("/" + mqtt_api.COMMAND):
+                # Command format contains 'type' and 'data' objects
+                if mqtt_api.TYPE not in json_value:
+                    self.logger.warning("Missing \"type\" key in command: %s", msg_str)
+                    return
+                if not mqtt_api.DATA in json_value:
+                    json_value[mqtt_api.DATA] = {}
+                received_command = json_value[mqtt_api.TYPE]
+                # Browse command callbacks
+                for subtopic, commands in self.command_callbacks.items():
+                    if validate_topic(msg.topic, subtopic):
+                        command_found = False
+                        # Response format is command fields + status or result fields
+                        response = {}
+                        response.update(json_value)
+                        response_topic = msg.topic.replace("/" + mqtt_api.COMMAND,
+                                                           "/" + mqtt_api.RESPONSE)
+                        for command, callback in commands.items():
+                            if command == received_command:
+                                command_found = True
+                                response[mqtt_api.RESULT] = mqtt_api.CMD_OK
+                                result = callback(msg.topic, json_value[mqtt_api.DATA])
+                                break
+                        if command_found is False:
+                            response[mqtt_api.RESULT] = mqtt_api.CMD_UNKNOWN
+                        elif result is False:
+                            response[mqtt_api.RESULT] = mqtt_api.CMD_ERROR
+
+                        self.mqtt_client.publish(response_topic,
+                                                 json.dumps(response),
+                                                 retain=False)
+            else:
+                # Browse general subtopics callbacks
+                for subtopic, callbacks in self.subtopic_callbacks.items():
+                    if validate_topic(msg.topic, subtopic):
+                        for (callback, optional_value) in callbacks:
+                            if optional_value is None or optional_value == json_value:
+                                self.logger.debug("%d callback(s) found for subtopic: %s",
+                                                  len(callbacks),
+                                                  subtopic)
+                                callback(msg.topic, json_value)
+        except Exception:
+            self.logger.info("TRACEBACK %s", traceback.format_exc())
+
+
+    def add_subtopic_callback(self, subtopic, callback, optional_value=None):
+        """Subtopic specific callbacks"""
+        # Format: {subtopic: [(callback, optional_value), (callback, optional_value)],
+        #          subtopic: [(callback, optional_value),...], ...] }
+        if callable(callback) is True:
+            if subtopic not in self.subtopic_callbacks:
+                self.subtopic_callbacks[subtopic] = []
+            self.subtopic_callbacks[subtopic].append((callback, optional_value))
+            return True
+        return False
+
+
+    def add_command_callback(self, subtopic, command, callback):
+        """Command callback"""
+        # Format: {subtopic: {command: callback, command: callback, ...}, subtopic:...}
+        if callable(callback) is True:
+            if subtopic not in self.command_callbacks:
+                self.command_callbacks[subtopic] = {}
+            if command not in self.command_callbacks[subtopic]:
+                self.command_callbacks[subtopic][command] = {}
+            self.command_callbacks[subtopic][command] = callback
+            self.logger.debug("add_command callback success: %s",
+                              self.command_callbacks)
+            return True
+        return False
+
+
+    def client(self):
+        """MQTT Client accessor"""
+        return self.mqtt_client
+
+
+    def loop(self):
+        """MQTT Client loop forever"""
+        self.mqtt_client.loop_forever()
+
+
+    def loop_once(self):
+        """MQTT Client loop one time"""
+        self.mqtt_client.loop()
+
+
+    def publish(self, topic, payload, retain=False):
+        """Publish on mqtt"""
+        self.mqtt_client.publish(topic, json.dumps(payload), retain=retain)
+
+
+    def publish_object(self, obj, topic='', retain=False):
+        """Iterate through python object and publish values to subtopics"""
+        if not topic:
+            topic = self.service_name
+        if isinstance(obj, list):
+            for index, value in enumerate(obj):
+                self.publish_object(value, f'{topic}/{index}', retain=retain)
+        elif isinstance(obj, dict):
+            for key in obj.keys():
+                self.publish_object(obj[key], f'{topic}/{key}', retain=retain)
+        else:
+            self.publish(topic, obj, retain=retain)

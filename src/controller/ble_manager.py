@@ -16,6 +16,7 @@ PASSKEY = 123456
 NO_BLOCK_TIMEOUT = 0.001
 
 
+#Change name to BleController
 class BleManager:
     def __init__(self, adapter=None, logger_mgr=None):
         self.adapter = BlueZClientArgs(adapter=adapter) if adapter else None

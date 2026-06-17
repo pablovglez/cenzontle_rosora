@@ -6,3 +6,4 @@ pydbus==0.6.0
 PyGObject==3.56.3
 pycairo==1.29.0
 bleak==3.0.2
+paho-mqtt==2.1.0
