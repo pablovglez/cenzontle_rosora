@@ -2,15 +2,18 @@ import os
 import sys
 import json
 import paho.mqtt.client as mqtt
+from utils import MQTT_API
 
-#MQTT_HOST="pi4-pvgonzalez.local"
+MQTT_HOST="pi4-pvgonzalez.local"
 MQTT_DEFAULT_ADDRESS = os.getenv("MQTT_HOST", "mosquitto-broker-host")
 MQTT_DEFAULT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_DEFAULT_KEEPALIVE = 60
 
 
 class MqttManager:
-    def __init__(self):
+    def __init__(self, logger_mgr=None):
+        self._logger_mgr = logger_mgr
+        self.logger = self._logger_mgr.add_child_logger(self.__class__.__name__)
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
                                   userdata=None,
                                   protocol=mqtt.MQTTv5)
@@ -33,8 +36,8 @@ class MqttManager:
         self.client.subscribe(self.__class__.__name__.lower() + "/#")
 
         # Publish status and version automatically on connect
-        self.client.publish(self.__class__.__name__.lower() + "/" + "status",
-                                 json.dumps({"status": "online"}),
+        self.client.publish(self.__class__.__name__.lower() + "/" + str(MQTT_API.STATUS),
+                                 json.dumps({str(MQTT_API.STATUS): str(MQTT_API.ONLINE)}),
                                  retain=True)
 
     def on_message(self, _client, _userdata, msg):
@@ -47,9 +50,12 @@ class MqttManager:
         """MQTT Client loop forever"""
         self.client.loop_forever()
 
+    def start(self):
+        self.client.loop_start()
+
     def disconnect(self):
-        self.client.publish(self.__class__.__name__.lower() + "/" + "status",
-                        json.dumps({"status": "offline"}),
+        self.client.publish(self.__class__.__name__.lower() + "/" + str(MQTT_API.STATUS),
+                        json.dumps({str(MQTT_API.STATUS): str(MQTT_API.OFFLINE)}),
                         retain=True)
         self.client.disconnect()
 

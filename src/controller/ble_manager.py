@@ -125,10 +125,14 @@ class BleManager:
                     raise
             self.ble_lock.release()
 
+    def queue_command(self, device_name, command_key, args):
+        self._command_queue.put({"device_name": device_name, "command_key": command_key, "args": args})
+
     async def dispatch_command(self):
         if not self._command_queue.empty() and not self.ble_lock.locked():
             self.ble_lock.acquire()
             command = self._command_queue.get(False)
+            self.logger.info(f"Dispatching command {command}")
             # Parse the command: Device_name, command_key, args
             device_name = command.get("device_name", None)
             command_key = command.get("command_key", None)
@@ -147,6 +151,8 @@ class BleManager:
                 self.ble_lock.release()
                 return
             await device.send_command(command_key, args)
+            await asyncio.sleep(NO_BLOCK_TIMEOUT)
+        else:
             await asyncio.sleep(NO_BLOCK_TIMEOUT)
 
 

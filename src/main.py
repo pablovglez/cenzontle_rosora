@@ -2,10 +2,12 @@ from threading import Lock, Thread
 import asyncio
 import sys
 import os
+import json
 import logging
 from gi.repository import GLib
 from bleak.exc import BleakDBusError
 from controller import BleManager
+from manager import MqttManager
 from utils.config_logger import LoggerManager
 
 
@@ -66,8 +68,8 @@ async def main(manager):
                                               ))
         task2 = tg.create_task(monitored_task(manager.connect_devices, name="ClientTask", restart_delay=5))
         task3 = tg.create_task(monitored_task(manager.enable_notifications, name="EnableNotificationTask", restart_delay=5))
-        #task4 = tg.create_task(monitored_task(manager.dispatch_command, name="CommandTask", restart_delay=5))
-        task5 = tg.create_task(monitored_task(manager.test_connect_devices, name="TestConnectTask", restart_delay=5))
+        task4 = tg.create_task(monitored_task(manager.dispatch_command, name="CommandTask", restart_delay=5))
+        #task5 = tg.create_task(monitored_task(manager.test_connect_devices, name="TestConnectTask", restart_delay=5))
 
         await asyncio.Event().wait()
 
@@ -82,22 +84,44 @@ if __name__ == "__main__":
                                service_type="Rosora")
     logger_mgr.config_logger()
 
-    manager = BleManager(adapter="hci0", logger_mgr=logger_mgr)
+    mqtt_mgr = MqttManager(logger_mgr=logger_mgr)
+    mqtt_mgr.start()
+
+    ble_manager = BleManager(adapter="hci0", logger_mgr=logger_mgr)
     #manager = BleManager(adapter="hci1")
 
+    def on_ble_command(client, userdata, message):
+        topic = message.topic
+        key_values = topic.split("/")
+        device = key_values[3]
+        message_payload = message.payload
+        command_key = json.loads(message_payload)["command"]
+        command_args = json.loads(message_payload)["args"]
+        ble_manager.queue_command(device, command_key, command_args)
+
+    mqtt_mgr.message_callback_add("mqttmanager/cenzontle/+/command", on_ble_command)
+    # {
+    # "device_name": "CENZ-0F8D17B6",
+    # "command": "set_relay",
+    # "args": {
+    #     "relay_number": 1,
+    #     "relay_state": True
+    #    }
+    # }
+
     try:
-        asyncio.run(main(manager))
+        asyncio.run(main(ble_manager))
     except KeyboardInterrupt:
         logging.info("Shutting down...")
-        manager.unregister_agent()
+        ble_manager.unregister_agent()
     except BleakDBusError as e:
         if (e.dbus_error == "org.bluez.Error.ConnectionAttemptFailed" and
                 "Page Timeout" in e.dbus_error_details):
             # Blocking error, no known solution, quit safely in the future
             logging.error(
                 f"Connection attempt failed ({e.dbus_error} - {e.dbus_error_details}), quitting safely.")
-            manager.unregister_agent()
+            ble_manager.unregister_agent()
             sys.exit(0)
     except Exception:
-        manager.unregister_agent()
+        ble_manager.unregister_agent()
         raise
