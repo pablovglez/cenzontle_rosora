@@ -66,9 +66,9 @@ async def main(manager):
                                               loop_delay=15,
                                               restart_delay=5,
                                               ))
-        task2 = tg.create_task(monitored_task(manager.connect_devices, name="ClientTask", restart_delay=5))
-        task3 = tg.create_task(monitored_task(manager.enable_notifications, name="EnableNotificationTask", restart_delay=5))
-        task4 = tg.create_task(monitored_task(manager.dispatch_command, name="CommandTask", restart_delay=5))
+        task2 = tg.create_task(monitored_task(manager.connect_devices, name="ClientTask", restart_delay=5, loop_delay=15))
+        task3 = tg.create_task(monitored_task(manager.enable_notifications, name="EnableNotificationTask", restart_delay=5, loop_delay=15))
+        task4 = tg.create_task(monitored_task(manager.dispatch_command, name="CommandTask", restart_delay=5, loop_delay=1))
         #task5 = tg.create_task(monitored_task(manager.test_connect_devices, name="TestConnectTask", restart_delay=5))
 
         await asyncio.Event().wait()
@@ -87,27 +87,31 @@ if __name__ == "__main__":
     mqtt_mgr = MqttManager(logger_mgr=logger_mgr)
     mqtt_mgr.start()
 
-    ble_manager = BleManager(adapter="hci0", logger_mgr=logger_mgr)
-    #manager = BleManager(adapter="hci1")
+    #ble_manager = BleManager(adapter="hci0", logger_mgr=logger_mgr)
+    ble_manager = BleManager(adapter="hci1", logger_mgr=logger_mgr)
 
     def on_ble_command(client, userdata, message):
         topic = message.topic
         key_values = topic.split("/")
-        device = key_values[3]
-        message_payload = message.payload
-        command_key = json.loads(message_payload)["command"]
-        command_args = json.loads(message_payload)["args"]
+        device = key_values[2]
+        message_payload = json.loads(message.payload.decode("utf-8"))
+        print(f"Received message: {message.payload}")
+        command_key = message_payload["command"]
+        command_args = message_payload["args"]
         ble_manager.queue_command(device, command_key, command_args)
 
     mqtt_mgr.message_callback_add("mqttmanager/cenzontle/+/command", on_ble_command)
     # {
     # "device_name": "CENZ-0F8D17B6",
-    # "command": "set_relay",
-    # "args": {
-    #     "relay_number": 1,
-    #     "relay_state": True
-    #    }
-    # }
+    """
+    {
+        "command": "set_relay",
+        "args": {
+            "relay_number": 1,
+            "relay_state": false
+        }
+    }
+    """
 
     try:
         asyncio.run(main(ble_manager))

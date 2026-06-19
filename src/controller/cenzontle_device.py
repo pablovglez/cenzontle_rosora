@@ -1,4 +1,6 @@
 import logging
+from data import BleServiceUri, BleNotifyUriList
+
 
 class CenzontleDevice:
     def __init__(self, address, props):
@@ -9,6 +11,8 @@ class CenzontleDevice:
         self.path = props.get('props', {}).get('Path', None)
         self.client = None
         self.notify_enabled = False
+        self._notify_uri = f"{BleServiceUri.NOTIFY[:-12]}{self.address.replace(':', '')}"
+        self._command_api_uri = f"{BleServiceUri.COMMAND_API[:-12]}{self.address.replace(':', '')}"
 
     def __str__(self):
         return (f"CenzontleDevice(address={self.address}, name={self.name},"
@@ -16,6 +20,14 @@ class CenzontleDevice:
 
     def __repr__(self):
         return self.__str__()
+
+    @property
+    def notify_uri(self):
+        return self._notify_uri
+
+    @property
+    def command_api_uri(self):
+        return self._command_api_uri
 
     def _compute_checksum(self, data):
         # Compute simple 2-byte checksum
@@ -55,7 +67,8 @@ class CenzontleDevice:
 
     async def send_command(self, command, kwargs=None):
         if self.client is None:
-            return False
+            pass
+            # log instead
 
         command_api = {
             "set_relay": self.on_relay_command,
@@ -64,11 +77,13 @@ class CenzontleDevice:
 
         command_handler = command_api.get(command, None)
         if command_handler is None:
-            return False
+            pass
+            # log instead
 
         command_data = command_handler(kwargs)
         if command_data is None:
-            return False
+            pass
+            # log instead
 
-        await self.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6', command_data)
-        return True
+        #await self.client.write_gatt_char('f980ab40-65f5-4467-0002-58e6c519989a', command_data)
+        await self.client.write_gatt_char(self.command_api_uri, command_data)

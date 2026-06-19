@@ -113,16 +113,16 @@ class BleManager:
             self.ble_lock.acquire()
             for device in self.devices.values():
                 if device.client is None or not device.client.is_connected:
-                    continue
-                if device.notify_enabled:
-                    continue
-                try:
-                    await device.client.start_notify('123e4567-f289-0b12-d302-a4f00f8d17b6', self.notify_callback)
-                    device.notify_enabled = True
-                    await asyncio.sleep(NO_BLOCK_TIMEOUT)
-                except Exception:
-                    self.ble_lock.release()
-                    raise
+                    pass
+                if not device.notify_enabled:
+                    try:
+                        #await device.client.start_notify('123e4567-f289-0b12-d302-a4f00f8d17b6', self.notify_callback)
+                        await device.client.start_notify(device.notify_uri, self.notify_callback)
+                        device.notify_enabled = True
+                        await asyncio.sleep(NO_BLOCK_TIMEOUT)
+                    except Exception:
+                        self.ble_lock.release()
+                        raise
             self.ble_lock.release()
 
     def queue_command(self, device_name, command_key, args):
@@ -140,18 +140,20 @@ class BleManager:
             if None in [device_name, command_key, args]:
                 self.logger.error(f"Invalid command: {command}")
                 self.ble_lock.release()
-                return
+                await asyncio.sleep(NO_BLOCK_TIMEOUT)
             device = self.devices.get(device_name, None)
             if device is None:
                 self.logger.error(f"Device {device_name} not found")
                 self.ble_lock.release()
-                return
+                await asyncio.sleep(NO_BLOCK_TIMEOUT)
             if device.client is None or not device.client.is_connected:
                 self.logger.error(f"Device {device_name} not connected")
                 self.ble_lock.release()
-                return
-            await device.send_command(command_key, args)
-            await asyncio.sleep(NO_BLOCK_TIMEOUT)
+                await asyncio.sleep(NO_BLOCK_TIMEOUT)
+            else:
+                await device.send_command(command_key, args)
+                await asyncio.sleep(NO_BLOCK_TIMEOUT)
+                self.ble_lock.release()
         else:
             await asyncio.sleep(NO_BLOCK_TIMEOUT)
 
