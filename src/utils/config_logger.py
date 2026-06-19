@@ -13,7 +13,7 @@ class LoggerManager:
     Args:
             name (str): The name of the logger.
             level (str): The logging level (e.g., logging.INFO).
-            service_type (str): The name of service used in log formatting and file naming.
+            service_type (str): The name of the service that is used in log formatting and file naming.
 
     """
     def __init__(self, name, level, service_type):

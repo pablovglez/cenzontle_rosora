@@ -2,7 +2,7 @@ import os
 import sys
 import json
 import paho.mqtt.client as mqtt
-from utils import MQTT_API
+from utils import CnzDefinitions
 
 MQTT_HOST="pi4-pvgonzalez.local"
 MQTT_DEFAULT_ADDRESS = os.getenv("MQTT_HOST", "mosquitto-broker-host")
@@ -36,8 +36,8 @@ class MqttManager:
         self.client.subscribe(self.__class__.__name__.lower() + "/#")
 
         # Publish status and version automatically on connect
-        self.client.publish(self.__class__.__name__.lower() + "/" + str(MQTT_API.STATUS),
-                                 json.dumps({str(MQTT_API.STATUS): str(MQTT_API.ONLINE)}),
+        self.client.publish(self.__class__.__name__.lower() + "/" + str(CnzDefinitions.STATUS),
+                                 json.dumps({str(CnzDefinitions.STATUS): str(CnzDefinitions.ONLINE)}),
                                  retain=True)
 
     def on_message(self, _client, _userdata, msg):
@@ -54,8 +54,8 @@ class MqttManager:
         self.client.loop_start()
 
     def disconnect(self):
-        self.client.publish(self.__class__.__name__.lower() + "/" + str(MQTT_API.STATUS),
-                        json.dumps({str(MQTT_API.STATUS): str(MQTT_API.OFFLINE)}),
+        self.client.publish(self.__class__.__name__.lower() + "/" + str(CnzDefinitions.STATUS),
+                        json.dumps({str(CnzDefinitions.STATUS): str(CnzDefinitions.OFFLINE)}),
                         retain=True)
         self.client.disconnect()
 

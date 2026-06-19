@@ -8,7 +8,12 @@ from gi.repository import GLib
 from bleak.exc import BleakDBusError
 from controller import BleManager
 from manager import MqttManager
+from schemas import config_schema
+from utils.definitions import CnzDefinitions
 from utils.config_logger import LoggerManager
+import jsonschema
+
+CONFIG_PATH = "../conf/config.json"
 
 
 LOG_FORMAT = "%(asctime)s [ALLIANCE / %(module)s] [%(levelname)s] %(message)s"
@@ -17,19 +22,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL_STR)
 VERSION = "x.x.x"
 
 service_uuid_filter = [
-    '123e4567-f289-0b12-d3f6-a4f00f8d17b6',
-    'f980ab40-65f5-4467-0000-7c9ebd0755ba',
-    'f980ab40-65f5-4467-0000-58e6c519989a',
-    'f980ab40-65f5-4467-0000-a4f00f8d17b4'
+
 ]
-
-CHARACTERISTIC_UUIDS_PREFIXES = [
-    "123e4567-f289-0b12",
-    "f980ab40-65f5-4467",
-    "00002902-0000-1000",  # Notification
-]
-
-
 
 
 async def monitored_task(coro_func, *args, name, loop_delay=5, restart_delay=2, **kwargs):
@@ -79,6 +73,17 @@ if __name__ == "__main__":
         level=log_level,
         format="%(asctime)-15s %(name)-8s %(levelname)s: %(message)s",
     )
+
+    with open(CONFIG_PATH, 'r', encoding="utf-8") as config_file:
+        schema = config_schema
+        config_data = json.load(config_file)
+        try:
+            jsonschema.validate(instance=config_data, schema=schema)
+        except jsonschema.ValidationError as e:
+            #self.logger.warning("Warning: bad configuration format: %s", e)
+            os._exit(1)
+
+    service_uuid_filter = config_data.get(str(CnzDefinitions.UUID_DEVICE_LIST), [])
 
     logger_mgr = LoggerManager(name="Cenzontle", level=LOG_LEVEL,
                                service_type="Rosora")

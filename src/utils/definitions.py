@@ -2,10 +2,12 @@ import enum
 
 # General Definitions
 
-class MQTT_API(enum.StrEnum):
+class CnzDefinitions(enum.StrEnum):
     STATUS = "status"
     ONLINE = "online"
     OFFLINE = "offline"
+
+    UUID_DEVICE_LIST = "uuid_device_list"
 
     def __str__(self):
         return self.value
