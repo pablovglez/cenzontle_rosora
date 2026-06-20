@@ -4,14 +4,14 @@ import json
 import paho.mqtt.client as mqtt
 from utils import CnzDefinitions
 
-MQTT_HOST="pi4-pvgonzalez.local"
-MQTT_DEFAULT_ADDRESS = os.getenv("MQTT_HOST", "mosquitto-broker-host")
-MQTT_DEFAULT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_DEFAULT_ADDRESS = "mosquitto-broker-host"
+MQTT_DEFAULT_PORT =  1883
 MQTT_DEFAULT_KEEPALIVE = 60
+PROJECT_NAME = str(CnzDefinitions.PROJECT)
 
 
 class MqttManager:
-    def __init__(self, logger_mgr=None):
+    def __init__(self, logger_mgr=None, config_data={}):
         self._logger_mgr = logger_mgr
         self.logger = self._logger_mgr.add_child_logger(self.__class__.__name__)
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
@@ -22,29 +22,27 @@ class MqttManager:
         self._callbacks = []
 
         try:
-            self.client.connect(MQTT_HOST,
-                                MQTT_DEFAULT_PORT,
-                                MQTT_DEFAULT_KEEPALIVE,
+            self.client.connect(config_data.get(str(CnzDefinitions.MQTT_HOST), MQTT_DEFAULT_ADDRESS),
+                                config_data.get(str(CnzDefinitions.MQTT_PORT), MQTT_DEFAULT_PORT),
+                                config_data.get(str(CnzDefinitions.MQTT_KEEPALIVE), MQTT_DEFAULT_KEEPALIVE),
                                 clean_start=True)
         except Exception as e:
-            #self.logger.critical("Failed to connect to MQTT broker")
-            print("Failed to connect to MQTT broker: {}".format(e))
+            self.logger.critical(f"Failed to connect to MQTT broker: {e.__class__.__name__}")
             sys.exit(-1)
 
     def on_connect(self, _client, _userdata, _flags, _rc, _properties):
         """Callback when connected"""
-        self.client.subscribe(self.__class__.__name__.lower() + "/#")
+        self.client.subscribe(PROJECT_NAME + "/#")
 
         # Publish status and version automatically on connect
-        self.client.publish(self.__class__.__name__.lower() + "/" + str(CnzDefinitions.STATUS),
-                                 json.dumps({str(CnzDefinitions.STATUS): str(CnzDefinitions.ONLINE)}),
+        self.client.publish(PROJECT_NAME + "/" + str(CnzDefinitions.STATUS),
+                                 str(CnzDefinitions.ONLINE),
                                  retain=True)
 
     def on_message(self, _client, _userdata, msg):
         """Callback for received message"""
         msg_str = msg.payload.decode("utf-8")
-        #self.logger.debug("Message received: %s on topic: %s", msg_str, msg.topic)
-        print(msg_str)
+        self.logger.debug("Message received: %s on topic: %s", msg_str, msg.topic)
 
     def loop(self):
         """MQTT Client loop forever"""
@@ -54,8 +52,8 @@ class MqttManager:
         self.client.loop_start()
 
     def disconnect(self):
-        self.client.publish(self.__class__.__name__.lower() + "/" + str(CnzDefinitions.STATUS),
-                        json.dumps({str(CnzDefinitions.STATUS): str(CnzDefinitions.OFFLINE)}),
+        self.client.publish(PROJECT_NAME + "/" + str(CnzDefinitions.STATUS),
+                        str(CnzDefinitions.OFFLINE),
                         retain=True)
         self.client.disconnect()
 

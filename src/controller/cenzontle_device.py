@@ -1,5 +1,5 @@
-import logging
-from data import BleServiceUri, BleNotifyUriList
+from data import BleServiceUri
+from utils import CnzDefinitions
 
 
 class CenzontleDevice:
@@ -37,7 +37,7 @@ class CenzontleDevice:
         return checksum % 256
 
     def on_echo_command(self, kwargs):
-        payload = kwargs.get('payload', None)
+        payload = kwargs.get(str(CnzDefinitions.PAYLOAD), None)
         if payload is None:
             return None
         # Check that payload is a bytearray
@@ -50,8 +50,8 @@ class CenzontleDevice:
 
     def on_relay_command(self, kwargs):
         # validate kwargs
-        relay_number = kwargs.get('relay_number', None)
-        relay_state = kwargs.get('relay_state', None)
+        relay_number = kwargs.get(str(CnzDefinitions.RELAY_NUMBER), None)
+        relay_state = kwargs.get(str(CnzDefinitions.RELAY_STATE), None)
 
         if None in (relay_number, relay_state):
             return None
@@ -71,8 +71,8 @@ class CenzontleDevice:
             # log instead
 
         command_api = {
-            "set_relay": self.on_relay_command,
-            "echo": self.on_echo_command,
+            str(CnzDefinitions.SET_RELAY): self.on_relay_command,
+            str(CnzDefinitions.ECHO): self.on_echo_command,
         }
 
         command_handler = command_api.get(command, None)
@@ -85,5 +85,4 @@ class CenzontleDevice:
             pass
             # log instead
 
-        #await self.client.write_gatt_char('f980ab40-65f5-4467-0002-58e6c519989a', command_data)
         await self.client.write_gatt_char(self.command_api_uri, command_data)

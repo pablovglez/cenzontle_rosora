@@ -38,6 +38,7 @@ class LoggerManager:
             self.level = numeric_level
 
         self.logger.setLevel(self.level)
+        self.logger.propagate = False
 
         formatter = logging.Formatter("%(asctime)s [%(service_type)s / %(name)s] [%(levelname)s] %(message)s")
 

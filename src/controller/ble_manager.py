@@ -1,38 +1,40 @@
 from threading import Lock, Thread
 import asyncio
-import logging
 import queue
 from bleak import BleakScanner, BlueZClientArgs, BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from pydbus import SystemBus
 from gi.repository import GLib
-from bleak.exc import BleakDBusError
+from bleak.exc import BleakDBusError, BleakDeviceNotFoundError
 from .cenzontle_device import CenzontleDevice
-from utils import AGENT_PATH, FixedPasskeyAgent
+from utils import AGENT_PATH, FixedPasskeyAgent, CnzDefinitions
 
-PASSKEY = 123456
 # Define a small timeout for await operations to avoid blocking the event loop for too long
 NO_BLOCK_TIMEOUT = 0.001
 
 
 #Change name to BleController
 class BleManager:
-    def __init__(self, adapter=None, logger_mgr=None):
+    def __init__(self, adapter=None, logger_mgr=None, mqtt_client=None, config_data={}):
+        if None in [logger_mgr, mqtt_client]:
+            raise ValueError("Logger manager and MQTT manager must be provided")
         self.adapter = BlueZClientArgs(adapter=adapter) if adapter else None
         self._logger_mgr = logger_mgr
         self.logger = self._logger_mgr.add_child_logger(self.__class__.__name__)
+        self.mqtt = mqtt_client
         self.devices = {}
         self.agent_manager = None
         self.ble_lock = Lock()
         self._dbus_loop = None
         self._dbus_thread = None
+        self._passkey = config_data.get(str(CnzDefinitions.PASSKEY), 000000)
         self._register_agent()
 
     def _register_agent(self):
         self._dbus_loop = GLib.MainLoop()
         bus = SystemBus()
-        agent = FixedPasskeyAgent(PASSKEY)
+        agent = FixedPasskeyAgent(self._passkey)
         bus.register_object(AGENT_PATH, agent, None)
         self.agent_manager = bus.get("org.bluez", "/org/bluez")
         self.agent_manager.RegisterAgent(AGENT_PATH, "KeyboardOnly")
@@ -54,8 +56,15 @@ class BleManager:
             self._dbus_loop.quit()
             self.logger.info("DBus event loop stopped.")
 
+    def stop_manager(self):
+        for device in self.devices.values():
+            self.mqtt.publish(
+                str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(CnzDefinitions.DEVICE_TOPIC),
+                str(CnzDefinitions.DISCONNECTED),
+                retain=False)
+
     def register_device(self, device: BLEDevice, advertisement_data: AdvertisementData):
-        self.logger.info(
+        self.logger.debug(
             "addr: %s, details: %s, %r", device.address, device.details, advertisement_data
         )
         address = device.address
@@ -67,28 +76,33 @@ class BleManager:
         scanner = BleakScanner(
             self.register_device, uuids_filter, bluez=self.adapter
         )
+        previous_list = self.devices.copy()
 
-        self.logger.info("Starting scanner")
-        if self.ble_lock.locked():
-            await asyncio.sleep(NO_BLOCK_TIMEOUT)
-        else:
+        if not self.ble_lock.locked():
+            self.logger.debug("Starting scanner")
             self.ble_lock.acquire()
             async with scanner:
                 await asyncio.sleep(timeout)
             self.ble_lock.release()
-
-        self.logger.info(f"Devices: {self.devices}")
+        if previous_list.keys() != self.devices.keys():
+            self.logger.info(f"Devices: {self.devices}")
 
     async def connect_devices(self):
+        devices_to_pop = []
         if not self.devices or self.ble_lock.locked():
             await asyncio.sleep(NO_BLOCK_TIMEOUT)
         else:
-            self.ble_lock.acquire()
             for device in self.devices.values():
                 if device.client is None or not device.client.is_connected:
                     try:
+                        self.ble_lock.acquire()
                         device.client = BleakClient(device.address, pair=True, timeout=10)
                         await device.client.__aenter__()
+                        self.ble_lock.release()
+                        self.mqtt.publish(
+                            str(CnzDefinitions.DEVICE_TOPIC)+ "/" + device.name.upper() + "/" + str(CnzDefinitions.DEVICE_TOPIC),
+                            str(CnzDefinitions.CONNECTED),
+                            retain=False)
                         await asyncio.sleep(NO_BLOCK_TIMEOUT)
                     except BleakDBusError as e:
                         if (e.dbus_error == "org.bluez.Error.ConnectionAttemptFailed" and
@@ -100,11 +114,22 @@ class BleManager:
                             await asyncio.sleep(NO_BLOCK_TIMEOUT)
                             continue
                         raise
+                    except BleakDeviceNotFoundError:
+                        self.logger.debug(f'Device {device.name} is not visible anymore, removing from list')
+                        devices_to_pop.append(device.name)
+                        self.mqtt.publish(
+                            str(CnzDefinitions.DEVICE_TOPIC)+ "/" + device.name.upper() + "/" + str(CnzDefinitions.DEVICE_TOPIC),
+                            str(CnzDefinitions.DISCONNECTED),
+                            retain=False)
+                        self.ble_lock.release()
+                        continue
                     except Exception:
                         self.ble_lock.release()
                         raise
 
-            self.ble_lock.release()
+            if devices_to_pop:
+                [self.devices.pop(device) for device in devices_to_pop]
+                self.logger.info(f"Devices: {self.devices}")
 
     async def enable_notifications(self):
         if not self.devices or self.ble_lock.locked():
@@ -112,11 +137,8 @@ class BleManager:
         else:
             self.ble_lock.acquire()
             for device in self.devices.values():
-                if device.client is None or not device.client.is_connected:
-                    pass
-                if not device.notify_enabled:
+                if device.client is not None and not device.notify_enabled and device.client.is_connected:
                     try:
-                        #await device.client.start_notify('123e4567-f289-0b12-d302-a4f00f8d17b6', self.notify_callback)
                         await device.client.start_notify(device.notify_uri, self.notify_callback)
                         device.notify_enabled = True
                         await asyncio.sleep(NO_BLOCK_TIMEOUT)
@@ -126,7 +148,9 @@ class BleManager:
             self.ble_lock.release()
 
     def queue_command(self, device_name, command_key, args):
-        self._command_queue.put({"device_name": device_name, "command_key": command_key, "args": args})
+        self._command_queue.put({str(CnzDefinitions.DEVICE_NAME): device_name,
+                                 str(CnzDefinitions.COMMAND_KEY): command_key,
+                                 str(CnzDefinitions.ARGS): args})
 
     async def dispatch_command(self):
         if not self._command_queue.empty() and not self.ble_lock.locked():
@@ -134,9 +158,9 @@ class BleManager:
             command = self._command_queue.get(False)
             self.logger.info(f"Dispatching command {command}")
             # Parse the command: Device_name, command_key, args
-            device_name = command.get("device_name", None)
-            command_key = command.get("command_key", None)
-            args = command.get("args", None)
+            device_name = command.get(str(CnzDefinitions.DEVICE_NAME), None)
+            command_key = command.get(str(CnzDefinitions.COMMAND_KEY), None)
+            args = command.get(str(CnzDefinitions.ARGS), None)
             if None in [device_name, command_key, args]:
                 self.logger.error(f"Invalid command: {command}")
                 self.ble_lock.release()
@@ -166,17 +190,7 @@ class BleManager:
             for device in self.devices.values():
                 if device.client is None or not device.client.is_connected:
                     continue
-                # Log the client.services:
-                """logger.info("Services: %s", device.client.services.services)
-                logger.info("Chars: %s", device.client.services.characteristics)
-                for chars in device.client.services.characteristics.values():
-                    logger.info("char val: %s", chars.uuid)
-                # Enable notifications, not working right now
-                try:
-                    await device.client.start_notify('123e4567-f289-0b12-d302-a4f00f8d17b6', self.notify_callback)
-                except Exception as e:
-                    logger.error(f"Error starting notifications: {e}")"""
-                # Send command
+               # Send command
                 await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
                                                     bytearray([0x0A, 0x30, 0x31, 0x32, 0x030, 0x00, 0xCD]))
                 await asyncio.sleep(2)
@@ -186,16 +200,24 @@ class BleManager:
                 await device.client.write_gatt_char('123e4567-f289-0b12-d302-a4f00f8d17b6',
                                                     bytearray([0x09, 0x01, 0x00, 0x00, 0x0A]))
                 await asyncio.sleep(2)
-                await device.send_command("set_relay", {"relay_number": 1, "relay_state": True})
+                await device.send_command(str(CnzDefinitions.SET_RELAY),
+                                          {str(CnzDefinitions.RELAY_NUMBER): 1,
+                                           str(CnzDefinitions.RELAY_STATE): True})
                 await asyncio.sleep(2)
-                await device.send_command("set_relay", {"relay_number": 1, "relay_state": False})
+                await device.send_command(str(CnzDefinitions.SET_RELAY),
+                                          {str(CnzDefinitions.RELAY_NUMBER): 1,
+                                           str(CnzDefinitions.RELAY_STATE): False})
                 for i in range(1, 24):
                     num = i % 4 + 1
                     self.logger.info(f"Sending command {num} to {device.name}")
                     await asyncio.sleep(0.25)
-                    await device.send_command("set_relay", {"relay_number": num, "relay_state": True})
+                    await device.send_command(str(CnzDefinitions.SET_RELAY),
+                                              {str(CnzDefinitions.RELAY_NUMBER): num,
+                                               str(CnzDefinitions.RELAY_STATE): True})
                     await asyncio.sleep(0.25)
-                    await device.send_command("set_relay", {"relay_number": num, "relay_state": False})
+                    await device.send_command(str(CnzDefinitions.SET_RELAY),
+                                              {str(CnzDefinitions.RELAY_NUMBER): num,
+                                               str(CnzDefinitions.RELAY_STATE): False})
             self.ble_lock.release()
 
     async def disconnect_devices(self):
