@@ -59,7 +59,7 @@ class BleManager:
     def stop_manager(self):
         for device in self.devices.values():
             self.mqtt.publish(
-                str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(CnzDefinitions.DEVICE_TOPIC),
+                str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(CnzDefinitions.STATUS),
                 str(CnzDefinitions.DISCONNECTED),
                 retain=False)
 
@@ -100,7 +100,7 @@ class BleManager:
                         await device.client.__aenter__()
                         self.ble_lock.release()
                         self.mqtt.publish(
-                            str(CnzDefinitions.DEVICE_TOPIC)+ "/" + device.name.upper() + "/" + str(CnzDefinitions.DEVICE_TOPIC),
+                            str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(CnzDefinitions.STATUS),
                             str(CnzDefinitions.CONNECTED),
                             retain=False)
                         await asyncio.sleep(NO_BLOCK_TIMEOUT)
