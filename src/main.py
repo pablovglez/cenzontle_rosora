@@ -79,7 +79,7 @@ if __name__ == "__main__":
         try:
             jsonschema.validate(instance=config_data, schema=schema)
         except jsonschema.ValidationError as e:
-            #self.logger.warning("Warning: bad configuration format: %s", e)
+            logging.warning("Warning: bad configuration format: %s", e)
             os._exit(1)
 
     service_uuid_filter = config_data.get(str(CnzDefinitions.UUID_DEVICE_LIST), [])

@@ -1,5 +1,6 @@
 from threading import Lock, Thread
 import asyncio
+import struct
 import queue
 from bleak import BleakScanner, BlueZClientArgs, BleakClient
 from bleak.backends.device import BLEDevice
@@ -139,6 +140,7 @@ class BleManager:
             for device in self.devices.values():
                 if device.client is not None and not device.notify_enabled and device.client.is_connected:
                     try:
+                        await device.client.start_notify(device.command_api_uri, self.notify_callback)
                         await device.client.start_notify(device.notify_uri, self.notify_callback)
                         device.notify_enabled = True
                         await asyncio.sleep(NO_BLOCK_TIMEOUT)
@@ -227,3 +229,5 @@ class BleManager:
 
     def notify_callback(self, char_uuid, value):
         self.logger.info("Notification from %s: %s", char_uuid, value)
+        temp, humidity, luminosity, delta_t, version = struct.unpack('<fffIi', value[1:-2])
+        self.logger.info(f"Temp: {temp:.2f} C, Humidity: {humidity:.2f} %, Luminosity: {luminosity:.2f} lux, Delta T: {delta_t:.2f} s, Version: {version}")
