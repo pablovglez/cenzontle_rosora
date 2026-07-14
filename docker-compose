@@ -1,0 +1,23 @@
+# To be used in a docker-compose.yml
+
+services:
+  rosora:
+    image: cenzontle_rosora:rpi
+    container_name: rosora
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /var/run/dbus:/var/run/dbus:ro
+      - ./conf:/app/conf
+      - ./log:/app/log
+    environment:
+      - CONFIG_PATH=/app/conf/config.json
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '2'

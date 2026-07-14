@@ -1,6 +1,8 @@
 from threading import Lock, Thread
 import asyncio
 import queue
+import json
+import struct
 from bleak import BleakScanner, BlueZClientArgs, BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -8,7 +10,7 @@ from pydbus import SystemBus
 from gi.repository import GLib
 from bleak.exc import BleakDBusError, BleakDeviceNotFoundError
 from .cenzontle_device import CenzontleDevice
-from utils import AGENT_PATH, FixedPasskeyAgent, CnzDefinitions
+from utils import AGENT_PATH, FixedPasskeyAgent, CnzDefinitions, NotificationsEnum
 
 # Define a small timeout for await operations to avoid blocking the event loop for too long
 NO_BLOCK_TIMEOUT = 0.001
@@ -102,7 +104,7 @@ class BleManager:
                         self.mqtt.publish(
                             str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(CnzDefinitions.STATUS),
                             str(CnzDefinitions.CONNECTED),
-                            retain=False)
+                            retain=True)
                         await asyncio.sleep(NO_BLOCK_TIMEOUT)
                     except BleakDBusError as e:
                         if (e.dbus_error == "org.bluez.Error.ConnectionAttemptFailed" and
@@ -126,6 +128,13 @@ class BleManager:
                     except Exception:
                         self.ble_lock.release()
                         raise
+                elif not not device.client.is_connected:
+                    devices_to_pop.append(device.name)
+                    self.mqtt.publish(
+                        str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(
+                            CnzDefinitions.DEVICE_TOPIC),
+                        str(CnzDefinitions.DISCONNECTED),
+                        retain=False)
 
             if devices_to_pop:
                 [self.devices.pop(device) for device in devices_to_pop]
@@ -139,6 +148,7 @@ class BleManager:
             for device in self.devices.values():
                 if device.client is not None and not device.notify_enabled and device.client.is_connected:
                     try:
+                        await device.client.start_notify(device.command_api_uri, self.notify_callback)
                         await device.client.start_notify(device.notify_uri, self.notify_callback)
                         device.notify_enabled = True
                         await asyncio.sleep(NO_BLOCK_TIMEOUT)
@@ -225,5 +235,39 @@ class BleManager:
             if device.client is not None:
                 await device.client.__aexit__(None, None, None)
 
+    def parse_notify_message(self, char_uuid, message):
+        device_address = f'CENZ-{char_uuid[-8:].upper()}'
+        self.logger.debug(f'message: {message}')
+        if device_address in self.devices.keys() and sum(message[:-2]) % 256 == message[-1]:
+            device = self.devices[device_address]
+            notification_type = message[0]
+            response_type = message[1]
+            if notification_type == NotificationsEnum.NTFY_RESPONSE:
+                if response_type == 9: # Relay response
+                    output_number = int(message[2])
+                    output_state = True if message[3] == 0x01 else False
+                    self.mqtt.publish(
+                        f'{CnzDefinitions.DEVICE_TOPIC}/{device.name.upper()}/{CnzDefinitions.OUTPUT}/{output_number}',
+                        json.dumps({CnzDefinitions.ENABLED: output_state}),
+                        retain=False
+                    )
+            elif notification_type == NotificationsEnum.NTFY_AMBIENT:
+
+                temperature, humidity, luminosity, delta_t, version = struct.unpack('<fffIi', message[1:-2])
+                self.logger.info(
+                    f"Temperature: {temperature:.2f} C, Humidity: {humidity:.2f} %, Luminosity: {luminosity:.2f} lux, "
+                    f"Delta T: {delta_t:.2f} s, Version: {version}")
+
+                if temperature != 0:
+                    self.mqtt.publish(
+                        f'{CnzDefinitions.DEVICE_TOPIC}/{device.name.upper()}/{CnzDefinitions.AMBIENT}/'
+                        f'{CnzDefinitions.TEMPERATURE}',
+                        f"{temperature:.2f}",
+                        retain=True
+                    )
+
+
     def notify_callback(self, char_uuid, value):
-        self.logger.info("Notification from %s: %s", char_uuid, value)
+        self.logger.debug("Notification from %s: %s", char_uuid, value)
+        if value != bytearray(b'OK'):
+            self.parse_notify_message(char_uuid.uuid, value)

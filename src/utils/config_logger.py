@@ -52,21 +52,17 @@ class LoggerManager:
         # Add a time rotated file handler only if there's not already one attached
         if not any(isinstance(h, TimedRotatingFileHandler) for h in self.logger.handlers):
             log_file = f"{self.service_type.lower()}.log"
-            log_path = f"../log/{log_file}"
-            try:
-                main_handler = TimedRotatingFileHandler(filename=log_path,
-                                                        when="midnight",
-                                                        backupCount=5,
-                                                        utc=True,
-                                                        encoding="utf-8")
-            except FileNotFoundError:
-                # If the log directory doesn't exist, create it and try again
-                os.makedirs("../log", exist_ok=True)
-                main_handler = TimedRotatingFileHandler(filename=log_path,
-                                                        when="midnight",
-                                                        backupCount=5,
-                                                        utc=True,
-                                                        encoding="utf-8")
+            log_path = os.getcwd() + f"/log/{log_file}"
+            log_dir = os.path.dirname(log_path)
+
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+
+            main_handler = TimedRotatingFileHandler(filename=log_path,
+                                                    when="midnight",
+                                                    backupCount=5,
+                                                    utc=True,
+                                                    encoding="utf-8")
             main_handler.setLevel(self.level)
             # Include service_type in the formatter using the '%(service_type)s' field
             main_handler.setFormatter(formatter)

@@ -79,7 +79,7 @@ if __name__ == "__main__":
         try:
             jsonschema.validate(instance=config_data, schema=schema)
         except jsonschema.ValidationError as e:
-            #self.logger.warning("Warning: bad configuration format: %s", e)
+            logging.warning("Warning: bad configuration format: %s", e)
             os._exit(1)
 
     service_uuid_filter = config_data.get(str(CnzDefinitions.UUID_DEVICE_LIST), [])
@@ -102,16 +102,6 @@ if __name__ == "__main__":
         ble_manager.queue_command(device, command_key, command_args)
 
     mqtt_mgr.message_callback_add(str(CnzDefinitions.DEVICE_CMD_TOPIC), on_ble_command)
-    """
-    {
-        "device": "CENZ-0F8D17B6",
-        "command": "set_relay",
-        "args": {
-            "relay_number": 1,
-            "relay_state": false
-        }
-    }
-    """
 
     try:
         asyncio.run(main(ble_manager))
@@ -119,6 +109,7 @@ if __name__ == "__main__":
         logging.info("Shutting down...")
         ble_manager.stop_manager()
         ble_manager.unregister_agent()
+        mqtt_mgr.disconnect()
     except BleakDBusError as e:
         if (e.dbus_error == "org.bluez.Error.ConnectionAttemptFailed" and
                 "Page Timeout" in e.dbus_error_details):

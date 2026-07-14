@@ -22,6 +22,12 @@ class CnzDefinitions(enum.StrEnum):
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     COMMAND = "command"
+    ENABLED = "enabled"
+    OUTPUT = "output"
+    AMBIENT = "ambient"
+    TEMPERATURE = "temperature"
+    HUMIDITY = "humidity"
+    LUX = "lux"
     DEVICE_TOPIC = PROJECT + "/" + CENZONTLE
     DEVICE_CMD_TOPIC = PROJECT + "/" + CENZONTLE+ "/" + COMMAND
 
@@ -39,3 +45,9 @@ class CnzDefinitions(enum.StrEnum):
     def __str__(self):
         return self.value
 
+
+class NotificationsEnum(enum.IntEnum):
+    NTFY_ACK = 1,
+    NTFY_ECHO = 2,
+    NTFY_RESPONSE = 11, #3
+    NTFY_AMBIENT = 4

@@ -74,7 +74,6 @@ def test_callback(_client, _userdata, message):
 
 if __name__ == "__main__":
     mqtt_manager = MqttManager()
-    mqtt_manager.message_callback_add("mqttmanager/test", test_callback)
     try:
         mqtt_manager.loop()
     except KeyboardInterrupt:
