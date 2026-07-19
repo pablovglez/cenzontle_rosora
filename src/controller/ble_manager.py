@@ -120,7 +120,7 @@ class BleManager:
                         self.logger.debug(f'Device {device.name} is not visible anymore, removing from list')
                         devices_to_pop.append(device.name)
                         self.mqtt.publish(
-                            str(CnzDefinitions.DEVICE_TOPIC)+ "/" + device.name.upper() + "/" + str(CnzDefinitions.DEVICE_TOPIC),
+                            str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(CnzDefinitions.STATUS),
                             str(CnzDefinitions.DISCONNECTED),
                             retain=False)
                         self.ble_lock.release()
@@ -128,11 +128,10 @@ class BleManager:
                     except Exception:
                         self.ble_lock.release()
                         raise
-                elif not not device.client.is_connected:
+                elif not device.client.is_connected:
                     devices_to_pop.append(device.name)
                     self.mqtt.publish(
-                        str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(
-                            CnzDefinitions.DEVICE_TOPIC),
+                        str(CnzDefinitions.DEVICE_TOPIC) + "/" + device.name.upper() + "/" + str(CnzDefinitions.STATUS),
                         str(CnzDefinitions.DISCONNECTED),
                         retain=False)
 

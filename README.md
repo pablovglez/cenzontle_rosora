@@ -15,26 +15,24 @@ sudo rfkill unblock all
 sudo rfkill unblock <device_name>
 ```
 
+# How to create a docker image for Raspberry Pi
 
-# How to create an docker image for Raspberry Pi
-
-From the root of the project, run the following command to build the docker image:
-
-```bash
-docker buildx create --name ixpia-builder --driver docker-container
-docker buildx use ixpia-builder
-docker buildx build --platform linux/arm/v7 -t cenzontle_rosora:rpi --output type=oci,dest=/home/efisio/Documents/docker_images/cenzontle_rosora.tar .
-```
-
-Copy the docker image to Raspberry Pi:
+From the root of the project, run the following the script to copy the necessary files
 
 ```bash
-scp /home/efisio/Documents/docker_images/cenzontle_rosora.tar ixpia@ixpia.lan:/tmp/cenzontle_rosora.tar
+./tools/prepare_image.sh root@<raspberry_pi_ip>
 ```
 
-On Raspberry Pi, load the docker image:
+Then, run the following command to build the docker image on your Raspberry Pi:
 
 ```bash
-docker load -i /tmp/cenzontle_rosora.tar
+docker build -t rosora:rpi .
 ```
+
+Once the image is built, you can run it with the docker-compose file provided
+
+```bash
+docker-compose up
+```
+
 
